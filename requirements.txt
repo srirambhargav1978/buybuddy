@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+langgraph
+langfuse
+openai
+pydantic>=2
