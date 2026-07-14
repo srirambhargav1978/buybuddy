@@ -45,7 +45,7 @@ uvicorn main:app --reload
 ```
 
 Requires a LiteLLM proxy running separately (see the
-[infrastructure repo](https://github.com/YOUR_USERNAME/sbm78-infrastructure)
+[infrastructure repo](https://github.com/srirambhargav1978/sbm78-infrastructure)
 for that setup) — this app doesn't call model providers directly.
 
 ## API
