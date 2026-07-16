@@ -5,12 +5,15 @@ Three nodes, run in sequence for every incoming chat message:
 
   1. extract_preferences — reads the conversation so far + the new message,
      asks the model to update a running JSON snapshot of what the shopper
-     wants (category, budget, style keywords). This is the "personalization"
-     part — preferences persist across turns within a session.
+     wants (category, budget, style keywords). For registered users this
+     starts pre-seeded from their on-file preferences/purchase history
+     (see main.py), so the very first reply is already personalized —
+     guests start from a blank slate, same as a brand-new shopper.
   2. search_catalog       — plain Python filtering over catalog.py using
      those preferences. No LLM call, no vector DB — deliberately simple.
   3. generate_reply       — asks the model to write a natural, helpful
-     response that recommends specific candidates from step 2.
+     response that recommends specific candidates from step 2, and may
+     reference the shopper's known purchase history when relevant.
 
 All LLM calls go through the LiteLLM proxy (not directly to OpenAI/Anthropic),
 using an OpenAI-compatible client pointed at LITELLM_BASE_URL. Langfuse
@@ -19,7 +22,7 @@ tracing wraps every graph run via the callback handler in main.py.
 
 import json
 import os
-from typing import Any, Dict, List, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict
 
 from openai import OpenAI
 from langgraph.graph import StateGraph, END
@@ -43,6 +46,7 @@ class BuyBuddyState(TypedDict):
     preferences: Dict[str, Any]
     candidates: List[Dict[str, Any]]
     reply: str
+    user_profile: Optional[Dict[str, Any]]
 
 
 PREFERENCE_SYSTEM_PROMPT = """You are a preference-extraction module for a shopping assistant.
@@ -51,13 +55,20 @@ with keys: category (string or null), budget_max (number or null), style (array 
 Only change keys the new message gives evidence for — keep existing values otherwise.
 Respond with ONLY the JSON object, no commentary, no markdown fences."""
 
-REPLY_SYSTEM_PROMPT = """You are BuyBuddy, a friendly and concise retail shopping assistant.
-You will be given the shopper's known preferences and a short list of candidate products.
-Write a warm, helpful reply (3-5 sentences) that recommends 1-3 of the candidates by name,
-briefly says why each fits what the shopper is looking for, and asks one natural follow-up
-question to keep narrowing things down. If there are no good candidates, say so honestly and
-ask a clarifying question instead of forcing a recommendation. Do not invent products that
-aren't in the candidate list."""
+REPLY_SYSTEM_PROMPT = """You are BuyBuddy, a friendly and concise personalized retail shopping assistant.
+You will be given the shopper's known preferences, a short list of candidate products, and — if this is
+a returning registered shopper — a summary of their past purchases (user_profile). Write a warm, helpful
+reply (3-5 sentences) that recommends 1-3 of the candidates by name, briefly says why each fits what the
+shopper is looking for, and asks one natural follow-up question to keep narrowing things down.
+
+If user_profile is present, subtly personalize the reply using it — e.g. referencing a relevant past
+purchase or known preference ("since you're into trail running...") — without being repetitive or
+mentioning "database" or "purchase history" mechanically; talk like a shop assistant who remembers a
+regular customer. If user_profile is absent (a guest, or a new/unknown shopper), stay friendly and
+neutral — do not invent history that wasn't given to you.
+
+If there are no good candidates, say so honestly and ask a clarifying question instead of forcing a
+recommendation. Do not invent products that aren't in the candidate list."""
 
 
 def extract_preferences(state: BuyBuddyState) -> BuyBuddyState:
@@ -128,6 +139,7 @@ def generate_reply(state: BuyBuddyState) -> BuyBuddyState:
                     "candidates": state.get("candidates", []),
                     "conversation_so_far": state.get("history", []),
                     "latest_message": state["message"],
+                    "user_profile": state.get("user_profile"),
                 })},
             ],
             temperature=0.6,
@@ -158,3 +170,18 @@ def build_graph():
 
 # Compiled once at import time and reused across requests.
 BUYBUDDY_GRAPH = build_graph()
+
+
+def build_user_profile(user: dict, history: list, preferences: list) -> Optional[Dict[str, Any]]:
+    """Summarizes a registered user's history/preferences for the reply prompt.
+    Returns None for guests (or anyone with no on-file history) so the agent
+    stays neutral instead of inventing personalization."""
+    if not user or user.get("role") != "registered" or not history:
+        return None
+    recent = [h["product_name"] for h in history[:6]]
+    return {
+        "name": user.get("name"),
+        "persona": user.get("persona"),
+        "known_preferences": preferences,
+        "recent_purchases": recent,
+    }

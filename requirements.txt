@@ -4,3 +4,4 @@ langgraph
 langfuse
 openai
 pydantic>=2
+python-multipart
