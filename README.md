@@ -57,6 +57,30 @@ Traces are sent to Langfuse automatically for full observability.
 account has a simple SVG avatar, and eligible items (eyewear, shirts,
 outerwear) render as an overlay on that avatar in a modal.
 
+## The agentic layer (`/agents`)
+
+A second, genuinely agentic LangGraph — separate from the simple
+recommendation flow above — visible at `/agents` after login. Six real
+agent nodes with a graph that actually branches at runtime (`agentic_agents.py`):
+
+1. **Classification** — labels the incoming message's intent
+2. **Routing** — a rule-based agent on top of the classifier that decides
+   which specialist handles it — an actual conditional edge in the graph,
+   not a simulated choice
+3. **Pricing Fetch** — catalog search + pricing for shopping intents
+4. **Policy** — answers returns/shipping/warranty questions
+5. **Handoff** — proposes escalating to a human, does not execute it
+6. **Human-in-the-Loop** — a real pause. Execution stops via LangGraph's
+   `interrupt()` and waits for an explicit approve/reject decision before
+   continuing — nothing simulated about the wait.
+
+The `/agents` page streams each agent's decision live over SSE as the
+graph runs, lighting up tiles laid out in the graph's actual shape. Every
+turn's full decision trail (which agent, what it decided, why) is
+persisted to SQLite and browsable afterward — full traceability, not just
+a live view. Each node is also a properly named span in the shared
+Langfuse trace for that turn, for the developer-grade view of the same run.
+
 ## Stack
 
 - **FastAPI** — HTTP API + serves the login page and app shell

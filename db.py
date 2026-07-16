@@ -80,6 +80,19 @@ def init_db():
             PRIMARY KEY (username, tag)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS agent_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            thread_id TEXT NOT NULL,
+            turn_index INTEGER NOT NULL,
+            message TEXT NOT NULL,
+            agent_name TEXT NOT NULL,
+            decision TEXT NOT NULL,
+            detail TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
     conn.commit()
 
     # Seed only if empty — keeps this idempotent across restarts.
@@ -146,3 +159,38 @@ def remove_preference(username: str, tag: str) -> None:
     conn.execute("DELETE FROM preferences WHERE username = ? AND tag = ?", (username, tag))
     conn.commit()
     conn.close()
+
+
+# --- Agentic layer: decision trace persistence -----------------------------
+
+def log_agent_decisions(username: str, thread_id: str, turn_index: int, message: str, decisions: List[Dict]) -> None:
+    conn = _connect()
+    now = datetime.datetime.utcnow().isoformat()
+    for d in decisions:
+        conn.execute(
+            "INSERT INTO agent_decisions (username, thread_id, turn_index, message, agent_name, decision, detail, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (username, thread_id, turn_index, message, d["agent"], d["decision"], d["detail"], now),
+        )
+    conn.commit()
+    conn.close()
+
+
+def get_agentic_turns(username: str, thread_id: str, limit: int = 20) -> List[Dict]:
+    """Groups this thread's logged decisions by turn, most recent first."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT turn_index, message, agent_name, decision, detail, created_at "
+        "FROM agent_decisions WHERE username = ? AND thread_id = ? ORDER BY turn_index DESC, id ASC",
+        (username, thread_id),
+    ).fetchall()
+    conn.close()
+
+    turns: Dict[int, Dict] = {}
+    for r in rows:
+        t = turns.setdefault(r["turn_index"], {"turn_index": r["turn_index"], "message": r["message"], "decisions": []})
+        t["decisions"].append({
+            "agent": r["agent_name"], "decision": r["decision"], "detail": r["detail"], "created_at": r["created_at"],
+        })
+    ordered = sorted(turns.values(), key=lambda t: t["turn_index"], reverse=True)
+    return ordered[:limit]

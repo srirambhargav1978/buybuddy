@@ -28,6 +28,9 @@ def create_session(username: str) -> str:
         "chat_history": [],  # list of {"role", "content"}
         "chat_preferences": {},
         "chat_seeded": False,
+        "agentic_thread_id": f"{token}:agentic",
+        "agentic_turn": 0,
+        "agentic_pending": False,  # True while a HITL interrupt is awaiting a decision
     }
     return token
 
